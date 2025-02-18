@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store'
+import { findParentDirectory } from '$lib/utils/fileOperations'
 
 export type FileType = 'file' | 'directory'
 
@@ -32,6 +33,7 @@ function createFileSystemStore() {
 
   return {
     subscribe,
+    
     createFile: (path: string, content: string = '') => 
       update(state => {
         const pathParts = path.split('/').filter(Boolean)
@@ -50,12 +52,18 @@ function createFileSystemStore() {
         const fileName = pathParts[pathParts.length - 1]
         if (!current.children) current.children = []
         
-        current.children.push({
-          name: fileName,
-          type: 'file',
-          content,
-          path
-        })
+        // Check if file already exists
+        const existingFile = current.children.find(child => child.name === fileName)
+        if (existingFile) {
+          existingFile.content = content
+        } else {
+          current.children.push({
+            name: fileName,
+            type: 'file',
+            content,
+            path
+          })
+        }
 
         return state
       }),
@@ -88,6 +96,66 @@ function createFileSystemStore() {
         return state
       }),
 
+    deleteNode: (path: string) =>
+      update(state => {
+        const pathParts = path.split('/').filter(Boolean)
+        const parentPath = pathParts.slice(0, -1).join('/')
+        const nodeName = pathParts[pathParts.length - 1]
+        
+        const parent = findParentDirectory(state.root, path)
+        if (!parent || !parent.children) return state
+        
+        const index = parent.children.findIndex(child => child.name === nodeName)
+        if (index !== -1) {
+          parent.children.splice(index, 1)
+          
+          // If deleted node was selected, clear selection
+          if (state.selectedFile?.path === path) {
+            state.selectedFile = null
+          }
+        }
+        
+        return state
+      }),
+
+    renameNode: (oldPath: string, newPath: string) =>
+      update(state => {
+        const oldParts = oldPath.split('/').filter(Boolean)
+        const newParts = newPath.split('/').filter(Boolean)
+        const oldName = oldParts[oldParts.length - 1]
+        const newName = newParts[newParts.length - 1]
+        
+        const parent = findParentDirectory(state.root, oldPath)
+        if (!parent || !parent.children) return state
+        
+        const node = parent.children.find(child => child.name === oldName)
+        if (node) {
+          node.name = newName
+          node.path = newPath
+          
+          // Update paths of all children if it's a directory
+          if (node.type === 'directory' && node.children) {
+            const updateChildPaths = (children: FileNode[], oldPrefix: string, newPrefix: string) => {
+              for (const child of children) {
+                child.path = child.path.replace(oldPrefix, newPrefix)
+                if (child.type === 'directory' && child.children) {
+                  updateChildPaths(child.children, oldPrefix, newPrefix)
+                }
+              }
+            }
+            
+            updateChildPaths(node.children, oldPath, newPath)
+          }
+          
+          // Update selection if renamed node was selected
+          if (state.selectedFile?.path === oldPath) {
+            state.selectedFile = node
+          }
+        }
+        
+        return state
+      }),
+
     selectFile: (file: FileNode | null) =>
       update(state => ({ ...state, selectedFile: file })),
 
@@ -114,7 +182,9 @@ function createFileSystemStore() {
         }
 
         return state
-      })
+      }),
+      
+    reset: () => set(initialState)
   }
 }
 
